@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.pkl
+*.ndjson
+*.ndjson.gz
+transcripts*.tar.gz
+.env
+wallet*.json
+out/
