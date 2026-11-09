@@ -10,39 +10,41 @@ they were tried in research (tools/) and did not help.
 All decisions are pure functions of the batches received so far.
 """
 
-from .market import SOL, Market, flow, top_holder_share
+from .market import SOL, Market, early_share, flow, top_holder_share
 
 BPS = 10_000
 
 DEFAULT_PARAMS = {
     # --- entry filter
-    "entry_rq_min": 50 * SOL,      # real SOL in the curve at decision time, lower bound
-    "entry_rq_max": 83 * SOL,      # ...upper bound (a curve completes near 85 SOL)
+    "entry_rq_min": 30 * SOL,      # real SOL in the curve at decision time, lower bound
+    "entry_rq_max": 80 * SOL,      # ...upper bound (a curve completes near 85 SOL)
     "min_age": 0,                  # slots since the CreateEvent
-    "max_age": 10**9,
-    "flow_window": 150,            # slots of tape the entry flow is read over
+    "max_age": 60,                 # a sprint: the curve reached entry_rq_min within this many slots of launch
+    "flow_window": 200,            # slots of tape the entry flow is read over
     "min_net_flow": 0,             # net SOL bought over flow_window
-    "min_buyers": 5,               # distinct buying wallets over flow_window
-    "max_dd_from_ath": 0.20,       # price at most this far under its all-time high
+    "min_buyers": 25,              # distinct buying wallets over flow_window (broad, organic demand)
+    "max_dd_from_ath": 0.30,       # price at most this far under its all-time high
     "max_top_holder": 1.0,         # largest wallet's share of tokens held outside the curve
+    "max_early_share": 0.5,        # share held by the launch's first-slot buyers (a bundle); 1.0 = off
     "max_big_sell_frac": 1.0,      # skip when a single recent sell took more than this share of real SOL
     "fresh_level_slots": 10**9,    # enter only within this many slots of first reaching entry_rq_min
     "max_entries_per_coin": 1,
     "cooldown_slots": 3000,
     # --- sizing
-    "stake": SOL // 2,             # target SOL per position (built over several batches)
+    "stake": SOL,                  # target SOL per position (built over several batches)
     "min_buy": 10_000_000,         # smallest buy order worth sending (also the guardrail floor)
     "cap_use": 0.98,               # share of the per-reply size cap a buy may use
-    "build_slots": 60,             # keep adding to a new position only this long after its first buy
+    "build_slots": 300,             # keep adding to a new position only this long after its first buy
     "max_positions": 5,
+    "halt_dd": 0.30,               # stop opening and adding once equity is this far under its peak
     "reserve": 1 * SOL,            # cash never committed to entries
     "buy_slip_bps": 500,
     # --- exits (fractions of the position's cost)
-    "tp": 0.08,
-    "sl": 0.30,
+    "tp": 100.0,                   # no take-profit: a completing curve is closed at its top by the replay
+    "sl": 0.25,
     "trail_arm": 10.0,             # trailing stop off (arms only at +1000%)
     "trail": 0.10,
-    "max_hold": 3000,
+    "max_hold": 10000,
     "exit_flow_window": 50,
     "exit_flow": -10**15,          # flow exit off (it cut winners on deep curves)
     "sell_slip_bps": BPS,
@@ -104,6 +106,7 @@ class Strategy:
         self.entries = {}       # mint -> entries made
         self.last_exit = {}     # mint -> slot of last exit decision
         self.qualified = set()  # mints with a round trip of at least min_buy closed (probe accounting)
+        self.equity_peak = 0    # highest cash + marked positions seen (circuit breaker)
         self.bought = {}        # mint -> lamports bought in the open round trip
         self.last_probe = -10**9
         self.marks = {}
@@ -178,6 +181,13 @@ class Strategy:
                                "max_slippage_bps": p["sell_slip_bps"]})
                 pos.exit_sent_slot = slot
                 self.last_exit[mint] = slot
+
+        # circuit breaker: once equity is halt_dd under its peak, open and add nothing more (the bar's 50% drawdown
+        # limit ranks an entry below every other one, so a bad day must stop well short of it)
+        equity = state.cash + sum(self._value(m, h.token_amount, state) for m, h in state.positions.items())
+        self.equity_peak = max(self.equity_peak, equity)
+        if equity < (1.0 - p["halt_dd"]) * self.equity_peak:
+            return orders
 
         # 2. adds to positions being built
         free = state.free_cash_lamports() - p["reserve"]
@@ -271,6 +281,8 @@ class Strategy:
         if c.rq > 0 and big_sell > p["max_big_sell_frac"] * c.rq:
             return False
         if p["max_top_holder"] < 1.0 and top_holder_share(c) > p["max_top_holder"]:
+            return False
+        if not adding and p["max_early_share"] < 1.0 and early_share(c) > p["max_early_share"]:
             return False
         return True
 

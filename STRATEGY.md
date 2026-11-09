@@ -1,48 +1,41 @@
-# Strategy
+# Strategy: sprint to graduation
 
-## What the bot measures
-For every coin in the universe it keeps, from the batches alone: the latest post-trade reserves, real
-SOL in the curve, the price and its all-time high, a 1,500-slot tape of trades (side, SOL, wallet),
-and net token balances per wallet. Positions are valued at the batch's marks, which include our own
-price impact, net of the 1.25% curve fee and the transaction fee.
+## The edge
+A pump.fun curve that completes (about 85 SOL of real reserve) is closed by the replay at its final reserves, as
+recorded: the top of the curve, whatever our own buys did to it. A coin bought at 30 SOL that completes sells at
+roughly 4x the price. Most coins never complete: on the dev window 7 of 1,222 did, and nearly every coin that
+reaches 30 SOL and fails crashes back to a fraction of that price. So the bot is a bet on telling the coming
+completions from the rugs early, and on cutting the rugs fast.
 
-## Entry
-A coin that trades in the current batch is a candidate when:
-- its curve holds between 50 and 83 SOL of real reserve (a curve completes at about 85 SOL);
-- its price is within 20% of its all-time high;
-- at least 5 distinct wallets bought it in the last 150 slots;
-- it was not traded by the bot before (one entry per coin).
-
-Candidates are taken deepest first while fewer than 5 positions are open or committed.
+## Entry (one per coin)
+A coin that trades in the batch is a candidate when:
+- its curve holds 30 to 80 SOL of real reserve, and it got there within 60 slots of its launch (a sprint);
+- at least 25 distinct wallets bought it over the last 200 slots (broad demand, not a handful of wallets);
+- the wallets that bought in its launch slot or the next hold at most half of the tokens outside the curve.
+  Coins whose supply sits with a launch bundle were, on the dev window, a family of near-identical rugs;
+- its price is within 30% of its all-time high.
 
 ## Sizing
-Each position targets 0.5 SOL, built over up to 60 slots, because a single reply may only spend 1% of
-the curve's real SOL. 1 SOL of cash is never committed. Buys allow 5% slippage against the decision
-price, so a buy that would land after a jump is refused (at no cost) instead of chasing.
+1 SOL per position, built over up to 300 slots under the 1%-of-real-reserve cap per reply. At most 5 positions,
+1 SOL of cash never committed.
 
 ## Exits
-A position is sold whole, in one order with no slippage limit (an exit must not be refused):
-- take-profit when its liquidation value is 8% over its cost;
-- stop when it is 30% under its cost;
-- after 3,000 slots in any case.
-A curve that completes is closed by the replay at its final reserves.
+- No take-profit: a completing curve is closed at its top by the replay.
+- Stop at 25% under cost (rugs can gap through it); a 10,000-slot time limit.
+- Circuit breaker: once equity is 30% under its peak, the bot opens and adds nothing more, so a bad day stays
+  well inside the 50% drawdown bar.
 
 ## Guardrail probes
-Until 26 coins carry a closed round trip of at least 0.01 SOL, the bot makes one probe every 400 slots:
-a 0.012 SOL buy on a curve holding at least 5 SOL, sold on the next batch. On the dev window the probes
-cost about 0.01 SOL in all.
+Until 26 coins carry a closed round trip of at least 0.01 SOL, one 0.012 SOL probe every 400 slots, sold on the
+next batch (about 0.01 SOL in all).
 
-## Why it may work
-Curves that already hold 50+ SOL are close to completion. Buying usually keeps coming as they near
-it, and a small target is often reached before the price turns. Completion closes the position at the
-top of the curve.
+## Evidence (tools/run.py, the exact Python port of the replay engine)
+- Dev window: +8.03 SOL, max drawdown 12.5%: 5 completions at about +2.2 SOL each, 10 stopped entries at about
+  -0.33 SOL each. It breaks even at about one completion in eight entries.
+- Its halves, as separate replays: -0.56 SOL (two entries, no completion) and +6.25 SOL.
+- 40 block surrogates (other coins' flow spliced into blocks, so they break real coin life cycles): median -1.17,
+  13 of 40 positive, worst drawdown 33.5%, at least 30 qualifying coins in every copy.
 
 ## Known limitations
-Research on the dev window (tools/, with an exact port of the replay engine) found no robust edge. The
-average coin falls after every signal tried: momentum, flow, launch age, holder concentration,
-copying profitable wallets, post-dump reversion and a gradient-boosting model. None of them covered
-fees out of sample. This configuration was chosen on 24 of the kit's block surrogates, where it had the
-best share of profitable copies (10 of 24) with a worst drawdown under 20%. Its mean there is still
-slightly negative (about -0.2 SOL), and on the dev window itself it lost 0.92 SOL. It is a bet on
-deep curves completing, not a proven edge. Rug pulls gap straight through the 30% stop: the worst
-losses lose 80% of the position in one or two slots.
+One day holds seven completions: the filters are fitted to a small sample. The bet is that their logic (fast, broad,
+unbundled demand) carries over; on a day with no such completion the bot loses a few tenths of a SOL per entry.

@@ -12,7 +12,7 @@ SOL = 1_000_000_000
 class CoinState:
     __slots__ = (
         "mint", "created_slot", "creator", "vq", "vt", "rq", "rt", "last_slot", "complete", "n_trades",
-        "tape", "ath", "ath_slot", "holders", "buyers", "first_price", "level_slots", "max_rq",
+        "tape", "ath", "ath_slot", "holders", "buyers", "first_price", "level_slots", "max_rq", "early",
     )
 
     def __init__(self, mint, slot, creator, vq, vt, rt):
@@ -37,6 +37,8 @@ class CoinState:
         #: Slot at which real SOL first reached each tracked level (index into LEVELS).
         self.level_slots = {}
         self.max_rq = 0
+        #: Wallets that bought within BUNDLE_SLOTS of the CreateEvent: a launch bundle when they hold most tokens.
+        self.early = set()
 
     @property
     def price(self):
@@ -47,6 +49,7 @@ class CoinState:
 
 
 TAPE_SLOTS = 1500
+BUNDLE_SLOTS = 1
 LEVELS = tuple(x * SOL for x in (5, 10, 20, 30, 40, 50, 60, 70))
 
 
@@ -92,6 +95,8 @@ class Market:
             h = c.holders.get(user, 0)
             if buy and h <= 0:
                 c.buyers += 1
+            if buy and slot - c.created_slot <= BUNDLE_SLOTS:
+                c.early.add(user)
             c.holders[user] = h + tok if buy else h - tok
             if c.rq > c.max_rq:
                 c.max_rq = c.rq
@@ -128,6 +133,17 @@ def flow(c, slot, window):
             if sol > big_sell:
                 big_sell = sol
     return net, nb, ns, len(users), big_sell
+
+
+def early_share(c):
+    """Share of the tokens held outside the curve that sit with the launch's first-slot buyers (a bundle)."""
+    circ = early = 0
+    for u, v in c.holders.items():
+        if v > 0:
+            circ += v
+            if u in c.early:
+                early += v
+    return early / circ if circ > 0 else 0.0
 
 
 def top_holder_share(c, exclude=()):
